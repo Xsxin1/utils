@@ -137,6 +137,15 @@ public:
       handlers_.size());
   }
 
+  void reset()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    node_ = nullptr;
+    param_event_handler_.reset();
+    callback_handle_.reset();
+    handlers_.clear();
+  }
+
   template <typename T>
   T & registerParam(
     const std::string & name, const T & default_value,
@@ -176,10 +185,28 @@ private:
         std::lock_guard<std::mutex> lock(mutex_);
 
         auto params = event.changed_parameters;
+        if (node_) {
+          RCLCPP_DEBUG(
+            node_->get_logger(),
+            "Parameter event: %zu changed, %zu new, %zu deleted",
+            params.size(), event.new_parameters.size(),
+            event.deleted_parameters.size());
+          for (const auto & param : params) {
+            RCLCPP_DEBUG(
+              node_->get_logger(), "  - %s (type: %d)",
+              param.name.c_str(), param.value.type);
+          }
+        }
         for (const auto & param : params) {
           auto it = handlers_.find(param.name);
           if (it != handlers_.end()) {
             it->second->update(param);
+          } else {
+            if (node_) {
+              RCLCPP_DEBUG(
+                node_->get_logger(), "No handler for parameter: %s",
+                param.name.c_str());
+            }
           }
         }
       };

@@ -15,21 +15,26 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   $<INSTALL_INTERFACE:include>
 )
 
-# if(BUILD_TESTING)
-#   find_package(ament_lint_auto REQUIRED)
-#   find_package(ament_cmake_gtest REQUIRED)
-#   ament_lint_auto_find_test_dependencies()
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(rclcpp REQUIRED)
+  find_package(Eigen3 REQUIRED)
   
-#   ament_add_gtest(utils_test
-#     test/utils_test.cpp
-#   )
+  ament_add_gtest(test_param_manager
+    test/test_param_manager.cpp
+  )
   
-#   if(TARGET utils_test)
-#     target_link_libraries(utils_test
-#       ${PROJECT_NAME}
-#     )
-#   endif()
-# endif()
+  if(TARGET test_param_manager)
+    target_link_libraries(test_param_manager
+      ${PROJECT_NAME}
+      Eigen3::Eigen
+    )
+
+  ament_target_dependencies(test_param_manager
+      rclcpp
+    )
+  endif()
+endif()
 
 ament_auto_package(
   INSTALL_TO_SHARE
