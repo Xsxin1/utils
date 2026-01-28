@@ -1,8 +1,6 @@
 // param_manager.h
 #pragma once
 
-#include <Eigen/Core>
-#include <any>
 #include <memory>
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
@@ -112,6 +110,11 @@ public:
   ParamManager & operator=(const ParamManager &) = delete;
   ParamManager(ParamManager &&) = delete;
   ParamManager & operator=(ParamManager &&) = delete;
+
+  ~ParamManager()
+  {
+    reset();
+  }
 
   void init(rclcpp::Node * node)
   {

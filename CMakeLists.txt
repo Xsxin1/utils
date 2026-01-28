@@ -18,7 +18,6 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(rclcpp REQUIRED)
-  find_package(Eigen3 REQUIRED)
   
   ament_add_gtest(test_param_manager
     test/test_param_manager.cpp
@@ -27,7 +26,6 @@ if(BUILD_TESTING)
   if(TARGET test_param_manager)
     target_link_libraries(test_param_manager
       ${PROJECT_NAME}
-      Eigen3::Eigen
     )
 
   ament_target_dependencies(test_param_manager
