@@ -1,6 +1,7 @@
 // param_manager.h
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
@@ -8,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace param
+namespace utils
 {
 
 class ParamManager
@@ -61,12 +62,17 @@ private:
         rclcpp::Parameter rclcpp_param =
           rclcpp::Parameter::from_parameter_msg(param);
         T new_value = rclcpp_param.get_value<T>();
+        T old_value = storage_ref_;
         storage_ref_ = new_value;
 
         if (node_) {
           RCLCPP_INFO(
             node_->get_logger(), "Updated %s = %s", name_.c_str(),
             toString(new_value).c_str());
+        }
+
+        if (callback_) {
+          callback_(old_value, new_value);
         }
       } catch (const std::exception & e) {
         if (node_) {
@@ -75,6 +81,12 @@ private:
             name_.c_str(), e.what());
         }
       }
+    }
+
+    void setCallback(
+      std::function<void(const T &, const T &)> callback)
+    {
+      callback_ = std::move(callback);
     }
 
   private:
@@ -96,6 +108,7 @@ private:
     T & storage_ref_;
     T default_value_;
     rclcpp::Node * node_ = nullptr;
+    std::function<void(const T &, const T &)> callback_;
   };
 
 public:
@@ -111,10 +124,7 @@ public:
   ParamManager(ParamManager &&) = delete;
   ParamManager & operator=(ParamManager &&) = delete;
 
-  ~ParamManager()
-  {
-    reset();
-  }
+  ~ParamManager() { reset(); }
 
   void init(rclcpp::Node * node)
   {
@@ -171,6 +181,28 @@ public:
     handlers_[name] = std::move(handler);
 
     return storage_ref;
+  }
+
+  template <typename T>
+  void setParamCallback(
+    const std::string & name,
+    std::function<void(const T &, const T &)> callback)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = handlers_.find(name);
+    if (it == handlers_.end()) {
+      throw std::runtime_error("Parameter not found: " + name);
+    }
+
+    auto * handler =
+      dynamic_cast<ParamHandler<T> *>(it->second.get());
+    if (!handler) {
+      throw std::runtime_error(
+        "Type mismatch for parameter: " + name);
+    }
+
+    handler->setCallback(std::move(callback));
   }
 
 private:
@@ -234,15 +266,39 @@ private:
 #define DEFINE_PARAM(type, name, default_val)               \
   type param_##name##_storage_ = default_val;               \
   type & name =                                             \
-    param::ParamManager::getInstance().registerParam<type>( \
+    utils::ParamManager::getInstance().registerParam<type>( \
       #name, default_val, param_##name##_storage_)
 
 // define a parameter with namespace and register it
 #define DEFINE_PARAM_NS(ns, type, name, default_val)        \
   type param_##ns##_##name##_storage_ = default_val;        \
   type & name =                                             \
-    param::ParamManager::getInstance().registerParam<type>( \
+    utils::ParamManager::getInstance().registerParam<type>( \
       #ns "." #name, default_val, param_##ns##_##name##_storage_)
 
-}  // namespace param
+// define a parameter and register it
+#define DEFINE_PARAM_INLINE(type, name, default_val)        \
+  inline type param_##name##_storage_ = default_val;        \
+  inline type & name =                                      \
+    utils::ParamManager::getInstance().registerParam<type>( \
+      #name, default_val, param_##name##_storage_)
+
+// define a parameter with namespace and register it
+#define DEFINE_PARAM_NS_INLINE(ns, type, name, default_val) \
+  inline type param_##ns##_##name##_storage_ = default_val; \
+  inline type & name =                                      \
+    utils::ParamManager::getInstance().registerParam<type>( \
+      #ns "." #name, default_val, param_##ns##_##name##_storage_)
+
+// set a callback for a parameter
+#define SET_PARAM_CALLBACK(type, name, callback)             \
+  utils::ParamManager::getInstance().setParamCallback<type>( \
+    #name, callback)
+
+// set a callback for a parameter with namespace
+#define SET_PARAM_CALLBACK_NS(ns, type, name, callback)      \
+  utils::ParamManager::getInstance().setParamCallback<type>( \
+    #ns "." #name, callback)
+
+}  // namespace utils
 // param_manager.h

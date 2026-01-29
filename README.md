@@ -9,7 +9,8 @@ ParamManager 是一个用于 ROS 2 的 C++ 参数管理库，提供类型安全�
 - **线程安全**：使用互斥锁保护内部数据结构
 - **延迟初始化**：可在节点初始化前注册参数
 - **动态更新**：自动监听参数变化并更新存储变量
-- **便捷宏**：提供 `DEFINE_PARAM` 和 `DEFINE_PARAM_NS` 宏简化参数定义
+- **更新回调**：支持为每个参数注册回调函数，在参数变化时执行自定义逻辑
+- **便捷宏**：提供 `DEFINE_PARAM`、`DEFINE_PARAM_NS`、`DEFINE_PARAM_INLINE`、`DEFINE_PARAM_NS_INLINE` 等宏简化参数定义
 - **完整测试**：包含全面的单元测试
 
 ## 依赖
@@ -35,7 +36,7 @@ int main(int argc, char** argv) {
     auto node = std::make_shared<rclcpp::Node>("my_node");
     
     // 使用裸指针初始化 ParamManager
-    auto& manager = param::ParamManager::getInstance();
+    auto& manager = utils::ParamManager::getInstance();
     manager.init(node.get());
     
     // 使用参数
@@ -47,12 +48,64 @@ int main(int argc, char** argv) {
 }
 ```
 
+### 2. 使用参数更新回调
+
+```cpp
+// 定义参数
+DEFINE_PARAM(double, speed_limit, 5.0);
+
+// 在初始化后设置回调
+SET_PARAM_CALLBACK(double, speed_limit, [](double old_val, double new_val) {
+    RCLCPP_INFO(rclcpp::get_logger("my_node"), 
+                "speed_limit changed from %f to %f", old_val, new_val);
+    // 执行自定义逻辑，如更新控制器增益等
+});
+
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<rclcpp::Node>("my_node");
+    utils::ParamManager::getInstance().init(node.get());
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
+}
+```
+
+### 3. 手动注册参数
+
+```cpp
+// 手动注册参数（适用于需要更精细控制的场景）
+int my_param_storage = 0;
+auto& manager = utils::ParamManager::getInstance();
+auto& param_ref = manager.registerParam<int>(
+    "my_param",  // 参数名
+    42,          // 默认值
+    my_param_storage  // 存储引用
+);
+
+// 设置回调
+manager.setParamCallback<int>("my_param", [](int old_val, int new_val) {
+    // 处理变化
+});
+
+// 初始化后，参数会自动声明并设置默认值
+manager.init(node.get());
+```
+
+### 4. 内联参数定义（适用于头文件）
+
+```cpp
+// 在头文件中使用内联宏，避免多重定义错误
+DEFINE_PARAM_INLINE(int, global_counter, 0);
+DEFINE_PARAM_NS_INLINE(robot, double, max_acceleration, 1.0);
+```
+
 ## API 参考
 
 ### 单例访问
 
 ```cpp
-param::ParamManager& manager = param::ParamManager::getInstance();
+utils::ParamManager& manager = utils::ParamManager::getInstance();
 ```
 
 ### 主要方法
@@ -74,10 +127,16 @@ param::ParamManager& manager = param::ParamManager::getInstance();
 - `storage_ref`: 存储变量的引用，参数值将存储于此
 - 返回：存储变量的引用（与 `storage_ref` 相同）
 
+#### `template <typename T> void setParamCallback(const std::string& name, std::function<void(const T&, const T&)> callback)`
+为已注册的参数设置更新回调函数。当参数值发生变化时，回调函数会被调用，传入旧值和新值。
+
+- `name`: 参数名称
+- `callback`: 回调函数，接受两个参数（旧值和新值）
+
 #### 宏定义
 
 ##### `DEFINE_PARAM(type, name, default_val)`
-定义并注册一个参数。
+定义并注册一个参数（非内联）。适用于源文件。
 
 - `type`: 参数类型（如 `int`、`double`、`bool`、`std::string` 等）
 - `name`: 参数变量名
@@ -90,7 +149,7 @@ DEFINE_PARAM(double, max_speed, 1.5);
 ```
 
 ##### `DEFINE_PARAM_NS(ns, type, name, default_val)`
-定义并注册一个带命名空间的参数。
+定义并注册一个带命名空间的参数（非内联）。
 
 - `ns`: 命名空间前缀
 - `type`: 参数类型
@@ -103,6 +162,18 @@ DEFINE_PARAM_NS(robot, double, velocity, 1.0);
 // 创建变量 velocity，对应 ROS 参数名为 "robot.velocity"
 ```
 
+##### `DEFINE_PARAM_INLINE(type, name, default_val)`
+定义并注册一个内联参数，可在头文件中使用。
+
+##### `DEFINE_PARAM_NS_INLINE(ns, type, name, default_val)`
+定义并注册一个带命名空间的内联参数，可在头文件中使用。
+
+##### `SET_PARAM_CALLBACK(type, name, callback)`
+为参数设置回调函数（非命名空间参数）。
+
+##### `SET_PARAM_CALLBACK_NS(ns, type, name, callback)`
+为带命名空间的参数设置回调函数。
+
 ## 支持的数据类型
 
 ParamManager 支持所有 ROS 2 参数类型：
@@ -112,13 +183,15 @@ ParamManager 支持所有 ROS 2 参数类型：
 
 ## 线程安全
 
-所有公共方法都是线程安全的，使用内部互斥锁保护。可以从多个线程安全地注册参数和调用 `init()`。
+所有公共方法都是线程安全的，使用内部互斥锁保护。可以从多个线程安全地注册参数、设置回调和调用 `init()`。
 
 ## 错误处理
 
 - 重复注册同名参数会抛出 `std::runtime_error`
 - 参数声明失败会记录错误并抛出异常
 - 参数更新失败会记录错误但不会抛出异常（避免影响其他参数更新）
+- 为不存在的参数设置回调会抛出 `std::runtime_error`
+- 类型不匹配的回调设置会抛出 `std::runtime_error`
 
 ## 示例
 
@@ -126,8 +199,9 @@ ParamManager 支持所有 ROS 2 参数类型：
 
 1. 基本参数注册和更新
 2. 宏定义使用
-3. 线程安全测试
-4. 完整工作流示例
+3. 回调函数测试
+4. 线程安全测试
+5. 完整工作流示例
 
 ## 构建和测试
 
@@ -145,6 +219,12 @@ cd /path/to/workspace
 colcon test --packages-select utils
 ```
 
+或直接运行：
+
+```bash
+./install/utils/lib/utils/test_param_manager
+```
+
 ## 设计说明
 
 ### 内部架构
@@ -154,19 +234,16 @@ ParamManager 使用模板方法模式，通过 `ParamHandlerBase` 和 `ParamHand
 1. 在 ROS 2 节点上声明参数
 2. 监听参数更新事件
 3. 更新存储变量
+4. 调用注册的回调函数
 
 ### 参数更新机制
 
 1. 通过 `rclcpp::ParameterEventHandler` 监听参数事件
 2. 当参数变化时，查找对应的参数处理器
 3. 调用处理器的 `update()` 方法更新存储变量
-4. 记录更新日志
+4. 调用注册的回调函数（如果存在）
+5. 记录更新日志
 
-## 限制
-
-- 参数必须在节点运行前注册（或至少在参数服务器查询前）
-- 不支持嵌套命名空间（仅支持单层命名空间）
-- 不支持动态类型变更（参数类型在注册时确定）
 
 ## 贡献
 
@@ -175,7 +252,6 @@ ParamManager 使用模板方法模式，通过 `ParamHandlerBase` 和 `ParamHand
 ## 许可证
 
 BSD-3-Clause
-
 
 ## 作者
 
